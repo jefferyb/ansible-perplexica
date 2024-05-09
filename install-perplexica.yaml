@@ -1,0 +1,204 @@
+####### Perplexica
+# https://github.com/ItzCrazyKns/Perplexica
+# https://github.com/ItzCrazyKns/Perplexica/blob/v1.4.0/docker-compose.yaml
+#######
+####### How to run it:
+#
+# $ ansible-playbook install-perplexica.yaml --diff
+#
+### To test ollama connection, you can try with --tags perplexica::ollama-connection, like:
+#
+# $ ansible-playbook install-perplexica.yaml --diff --tags perplexica::ollama-connection 
+#
+### To specify your own/specific ollama url, you can try something like:
+# Test with:
+# $ ansible-playbook install-perplexica.yaml --diff -e ollama_base_url=ollama.example.com --tags perplexica::ollama-connection
+# Run/Use with:
+# $ ansible-playbook install-perplexica.yaml --diff -e ollama_base_url=ollama.example.com
+#
+### To try a specific perplexica version, you can try something like:
+#
+# $ ansible-playbook install-perplexica.yaml --diff -e perplexica_version=v1.3.4
+#
+### If you want to run it with https, you can try something like:
+#
+# $ ansible-playbook install-perplexica.yaml --diff -e next_public_url=perplexica-backend.example.com -e use_https=true
+#
+#######
+---
+- name: Install/Update Perplexica
+  hosts: "{{ host | default('localhost') }}"
+  vars:
+    git_clone_perplexica_location: "{{ ansible_user_dir }}/.local/opt/perplexica"
+    ollama_base_url: >-
+      {% if ansible_system == 'Linux' %}http://localhost:11434
+      {% elif ansible_os_family == 'Darwin' %}http://host.docker.internal:11434
+      {% elif ansible_os_family == 'Windows' %}http://host.docker.internal:11434
+      {% endif %}
+    next_public_url: 127.0.0.1:3001 # If using https, this would be set to the url assigned to the backend, like traefik_backend_url
+    use_https: false
+    perplexica_version: master
+    # traefik_backend_url: perplexica-backend.example.com
+    # traefik_frontend_url: perplexica.example.com
+  tasks:
+    - name: Reviewing variables being used...
+      tags: perplexica::variables
+      ansible.builtin.debug:
+        msg: |
+
+          Here are the env. variables being used:
+          
+               ollama_base_url = {{ ollama_base_url | trim }}
+               next_public_url = {{ next_public_url }}
+                     use_https = {{ use_https }}
+            perplexica_version = {{ perplexica_version }}
+
+    - name: Test Ollama Connection
+      tags: perplexica::ollama-connection
+      ansible.builtin.uri:
+        url: "{{ ollama_base_url | trim }}"
+        method: GET
+        status_code: 200
+        return_content: false
+        timeout: 3
+      register: ollama_connection
+      until: ollama_connection.status == 200
+      retries: 3
+      delay: 1
+      check_mode: false
+
+    - name: Create perplexica-network network
+      tags: perplexica::network
+      community.docker.docker_network:
+        name: perplexica-network
+
+    - name: Git Clone Perplexica
+      tags: perplexica::git-clone, perplexica::update-config, perplexica::rebuild-searxng, perplexica::rebuild-backend, perplexica::rebuild-frontend
+      ansible.builtin.git:
+        repo: https://github.com/ItzCrazyKns/Perplexica.git
+        dest: "{{ git_clone_perplexica_location }}"
+        force: true
+        single_branch: true
+        version: "{{ perplexica_version }}"
+      register: git_clone_perplexica
+
+    - name: Check changes / if config.toml needs updating
+      tags: perplexica::update-config
+      ansible.builtin.shell: git diff --shortstat {{ git_clone_perplexica_location }}/sample.config.toml {{ git_clone_perplexica_location }}/config.toml | awk '{ print $6 }' || true
+      register: git_diff_result
+      changed_when: false
+      check_mode: false
+
+    # - name: "{{ lxd_container_name }} | Show config_file results"
+    #   tags: update::perplexica
+    #   ansible.builtin.debug:
+    #     var: git_diff_result
+
+    - name: Copy sample.config.toml to config.toml
+      tags: perplexica::update-config
+      ansible.builtin.copy:
+        src: "{{ git_clone_perplexica_location }}/sample.config.toml"
+        dest: "{{ git_clone_perplexica_location }}/config.toml"
+        mode: '0644'
+        remote_src: true
+        force: true
+      when: (git_diff_result.stdout == "") or (git_diff_result.stdout | int > 1)
+      register: config_toml
+
+    - name: Update OLLAMA value
+      tags: perplexica::update-config
+      ansible.builtin.lineinfile:
+        path: "{{ git_clone_perplexica_location }}/config.toml"
+        regexp: ^OLLAMA\s*=\s*"?"
+        line: OLLAMA = "{{ ollama_base_url | trim }}"
+      register: ollama_setting
+
+    ### Force a rebuild of the images with new changes
+    - name: Build perplexica-searxng
+      tags: perplexica::rebuild-searxng
+      community.docker.docker_image:
+        name: perplexica-searxng
+        tag: latest
+        build:
+          path: "{{ git_clone_perplexica_location }}/"
+          dockerfile: searxng.dockerfile
+          pull: true
+          nocache: true
+        source: build
+        force_source: true
+      when: git_clone_perplexica.changed or ('perplexica::rebuild-searxng' in ansible_run_tags) # noqa: no-handler
+
+    - name: Build perplexica-backend
+      tags: perplexica::rebuild-backend, perplexica::update-config
+      community.docker.docker_image:
+        name: perplexica-backend
+        tag: latest
+        build:
+          path: "{{ git_clone_perplexica_location }}/"
+          dockerfile: backend.dockerfile
+          pull: true
+          nocache: true
+          args:
+            SEARXNG_API_URL: http://perplexica-searxng:8080
+        source: build
+        force_source: true
+      when: git_clone_perplexica.changed or config_toml.changed or ollama_setting.changed or ('perplexica::rebuild-backend' in ansible_run_tags) # noqa: no-handler
+
+    - name: Build perplexica-frontend
+      tags: perplexica::rebuild-frontend
+      community.docker.docker_image:
+        name: perplexica-frontend
+        tag: latest
+        build:
+          path: "{{ git_clone_perplexica_location }}/"
+          dockerfile: app.dockerfile
+          pull: true
+          nocache: true
+          args:
+            NEXT_PUBLIC_API_URL: "{{ 'https' if use_https == true else 'http' }}://{{ next_public_url }}/api"
+            NEXT_PUBLIC_WS_URL: "{{ 'wss' if use_https == true else 'ws' }}://{{ next_public_url }}"
+        source: build
+        force_source: true
+      when: git_clone_perplexica.changed or ('perplexica::rebuild-frontend' in ansible_run_tags) # noqa: no-handler
+
+    ### Start containers
+    - name: Start perplexica-searxng container
+      tags: perplexica::rebuild-searxng
+      community.docker.docker_container:
+        name: perplexica-searxng
+        image: perplexica-searxng:latest
+        restart_policy: always
+        networks:
+          - name: perplexica-network
+
+    - name: Start perplexica-backend container
+      tags: perplexica::rebuild-backend, perplexica::update-config
+      community.docker.docker_container:
+        name: perplexica-backend
+        image: perplexica-backend:latest
+        restart_policy: always
+        ports:
+          - "3001:3001"
+        networks:
+          - name: perplexica-network
+          # - name: nginx_proxy_manager
+        # labels:
+        #   traefik.enable: 'true'
+        #   traefik.http.routers.perplexica.rule: 'Host(`{{ traefik_backend_url }}`)'
+        #   traefik.http.services.perplexica.loadbalancer.server.port: '3001'
+
+    - name: Start perplexica-frontend container
+      tags: perplexica::rebuild-frontend
+      community.docker.docker_container:
+        name: perplexica-frontend
+        image: perplexica-frontend:latest
+        restart_policy: always
+        ports:
+          - "3003:3000"
+        networks:
+          - name: perplexica-network
+          # - name: nginx_proxy_manager
+        # labels:
+        #   traefik.enable: 'true'
+        #   traefik.http.routers.perplexica.rule: 'Host(`{{ traefik_frontend_url }}`)'
+        #   traefik.http.services.perplexica.loadbalancer.server.port: '3000'
