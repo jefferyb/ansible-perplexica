@@ -2,6 +2,8 @@
 
 Perplexica is an AI-powered search engine. It is an Open Source alternative to Perplexity AI, running locally using Open Source tools like Ollama. For more information, visit https://github.com/ItzCrazyKns/Perplexica
 
+This ansible playbook should help install/manage/upgrade an instance of Perplexica on your local or remote system.
+
 # A Quick how to get started
 
 To install/update Perplexica, run:
