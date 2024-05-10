@@ -6,6 +6,10 @@
 #
 # $ ansible-playbook install-perplexica.yaml --diff
 #
+# Or you can use ansible-pull with:
+#
+# $ ansible-pull --diff -U https://github.com/jefferyb/ansible-perplexica.git -C main install-perplexica.yaml
+#
 ### To test ollama connection, you can try with --tags perplexica::ollama-connection, like:
 #
 # $ ansible-playbook install-perplexica.yaml --diff --tags perplexica::ollama-connection 

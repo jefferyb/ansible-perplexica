@@ -8,6 +8,9 @@ To install/update Perplexica, run:
 ```bash
 ansible-playbook install-perplexica.yaml --diff
 
+# Or you can use ansible-pull, like:
+ansible-pull --diff -U https://github.com/jefferyb/ansible-perplexica.git -C main install-perplexica.yaml
+
 # If you're running docker using lima-vm on MacOS, use:
 ansible-playbook install-perplexica.yaml --diff -e ollama_base_url=http://host.lima.internal:11434
 ```
