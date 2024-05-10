@@ -53,20 +53,6 @@
                      use_https = {{ use_https }}
             perplexica_version = {{ perplexica_version }}
 
-    - name: Test Ollama Connection
-      tags: perplexica::ollama-connection
-      ansible.builtin.uri:
-        url: "{{ ollama_base_url | trim }}"
-        method: GET
-        status_code: 200
-        return_content: false
-        timeout: 3
-      register: ollama_connection
-      until: ollama_connection.status == 200
-      retries: 3
-      delay: 1
-      check_mode: false
-
     - name: Create perplexica-network network
       tags: perplexica::network
       community.docker.docker_network:
@@ -202,3 +188,21 @@
         #   traefik.enable: 'true'
         #   traefik.http.routers.perplexica.rule: 'Host(`{{ traefik_frontend_url }}`)'
         #   traefik.http.services.perplexica.loadbalancer.server.port: '3000'
+
+    ### DEBUGGING
+    # Useful for testing local/remote connections... It won't be able to test the host.{docker,lima}.internal connections
+    - name: Test Ollama Connection
+      tags: perplexica::ollama-connection
+      ansible.builtin.uri:
+        url: "{{ ollama_base_url | trim }}"
+        method: GET
+        status_code: 200
+        return_content: false
+        timeout: 3
+      register: ollama_connection
+      until: ollama_connection.status == 200
+      retries: 3
+      delay: 1
+      check_mode: false
+      when: "'perplexica::ollama-connection' in ansible_run_tags"
+
