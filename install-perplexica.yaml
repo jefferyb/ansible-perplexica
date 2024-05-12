@@ -41,12 +41,25 @@
       {% endif %}
     next_public_url: 127.0.0.1:3001 # If using https, this would be set to the url assigned to the backend, like traefik_backend_url
     use_https: false
-    perplexica_version: master
+    # perplexica_version:
+
     # traefik_backend_url: perplexica-backend.example.com
     # traefik_frontend_url: perplexica.example.com
   tasks:
+    - name: Retrieve Perplexica latest release URL
+      tags: perplexica::variables, update::perplexica
+      ansible.builtin.uri:
+        url: https://github.com/ItzCrazyKns/Perplexica/releases/latest
+      register: latest_release_url
+      check_mode: false
+
+    - name: Extract version from {{ latest_release_url.url }} # noqa: name[template]
+      tags: perplexica::variables, update::perplexica
+      ansible.builtin.set_fact:
+        app_version: "{{ latest_release_url.url | regex_replace('.*/', '') }}"
+
     - name: Reviewing variables being used...
-      tags: perplexica::variables
+      tags: perplexica::variables, update::perplexica
       ansible.builtin.debug:
         msg: |
 
@@ -55,7 +68,7 @@
                ollama_base_url = {{ ollama_base_url | trim }}
                next_public_url = {{ next_public_url }}
                      use_https = {{ use_https }}
-            perplexica_version = {{ perplexica_version }}
+            perplexica_version = "{{ perplexica_version if perplexica_version is defined else app_version }}"
 
     - name: Create perplexica-network network
       tags: perplexica::network
@@ -69,7 +82,7 @@
         dest: "{{ git_clone_perplexica_location }}"
         force: true
         single_branch: true
-        version: "{{ perplexica_version }}"
+        version: "{{ perplexica_version if perplexica_version is defined else app_version }}"
       register: git_clone_perplexica
 
     - name: Check changes / if config.toml needs updating
@@ -79,7 +92,7 @@
       changed_when: false
       check_mode: false
 
-    # - name: "{{ lxd_container_name }} | Show config_file results"
+    # - name: Show config_file results"
     #   tags: update::perplexica
     #   ansible.builtin.debug:
     #     var: git_diff_result

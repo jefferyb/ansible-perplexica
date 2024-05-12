@@ -52,6 +52,15 @@ The playbook uses the following tags:
   * perplexica::rebuild-backend: Rebuilds & Redeploys the perplexica-backend image.
   * perplexica::rebuild-frontend: Rebuilds & Redeploys the perplexica-frontend image.
 
+### Variables
+
+You can update/change some settings/variables by using `-e` or `--extra-vars`. You can see which ones you can use, starting from (line 36)[https://github.com/jefferyb/ansible-perplexica/blob/main/install-perplexica.yaml#L36]
+
+For example, you can specify a perplexica version, with something like:
+```bash
+ansible-playbook install-perplexica.yaml --diff -e perplexica_version=v1.3.4
+```
+
 # Debugging
 
 ### No module named 'requests'
