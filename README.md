@@ -8,14 +8,19 @@ This ansible playbook should help install/manage/upgrade an instance of Perplexi
 
 To install/update Perplexica, run:
 ```bash
+# git clone the repo, cd into the folder and run:
 ansible-playbook install-perplexica.yaml --diff
 
 # Or you can use ansible-pull, like:
 ansible-pull --diff -U https://github.com/jefferyb/ansible-perplexica.git -C main install-perplexica.yaml
 
-# If you're running docker using lima-vm on MacOS, use:
+# If you're running docker using lima-vm on MacOS, try:
 ansible-playbook install-perplexica.yaml --diff -e ollama_base_url=http://host.lima.internal:11434
 ```
+
+After the playbook is complete, you should be able to access Perplexica on port 3003 ( since the default port 3000 is popular, I switched to 3003. Or, you can use `-e frontend_port=3000` to switch it to 3000, or whatever port you would like ), http://localhost:3003
+
+### Some settings you can change/do
 
 To test ollama connection, you can try with --tags perplexica::ollama-connection, like:
 

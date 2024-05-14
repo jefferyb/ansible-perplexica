@@ -41,22 +41,26 @@
       {% endif %}
     next_public_url: 127.0.0.1:3001 # If using https, this would be set to the url assigned to the backend, like traefik_backend_url
     use_https: false
+    backend_port: 3001
+    frontend_port: 3003
     # perplexica_version:
 
     # traefik_backend_url: perplexica-backend.example.com
     # traefik_frontend_url: perplexica.example.com
   tasks:
     - name: Retrieve Perplexica latest release URL
-      tags: perplexica::variables, update::perplexica
+      tags: perplexica::variables, update::perplexica, perplexica::rebuild-searxng
       ansible.builtin.uri:
         url: https://github.com/ItzCrazyKns/Perplexica/releases/latest
       register: latest_release_url
       check_mode: false
+      when: perplexica_version is not defined
 
     - name: Extract version from {{ latest_release_url.url }} # noqa: name[template]
-      tags: perplexica::variables, update::perplexica
+      tags: perplexica::variables, update::perplexica, perplexica::rebuild-searxng
       ansible.builtin.set_fact:
         app_version: "{{ latest_release_url.url | regex_replace('.*/', '') }}"
+      when: perplexica_version is not defined
 
     - name: Reviewing variables being used...
       tags: perplexica::variables, update::perplexica
@@ -117,6 +121,12 @@
       register: ollama_setting
 
     ### Force a rebuild of the images with new changes
+    - name: Check if searxng.dockerfile exists
+      tags: perplexica::rebuild-searxng
+      ansible.builtin.stat:
+        path: "{{ git_clone_perplexica_location }}/searxng.dockerfile"
+      register: searxng_dockerfile
+
     - name: Build perplexica-searxng
       tags: perplexica::rebuild-searxng
       community.docker.docker_image:
@@ -129,7 +139,9 @@
           nocache: true
         source: build
         force_source: true
-      when: git_clone_perplexica.changed or ('perplexica::rebuild-searxng' in ansible_run_tags) # noqa: no-handler
+      when:
+        - git_clone_perplexica.changed or ('perplexica::rebuild-searxng' in ansible_run_tags)
+        - searxng_dockerfile.stat.exists
 
     - name: Build perplexica-backend
       tags: perplexica::rebuild-backend, perplexica::update-config
@@ -145,7 +157,7 @@
             SEARXNG_API_URL: http://perplexica-searxng:8080
         source: build
         force_source: true
-      when: git_clone_perplexica.changed or config_toml.changed or ollama_setting.changed or ('perplexica::rebuild-backend' in ansible_run_tags) # noqa: no-handler
+      when: git_clone_perplexica.changed or config_toml.changed or ollama_setting.changed or ('perplexica::rebuild-backend' in ansible_run_tags)
 
     - name: Build perplexica-frontend
       tags: perplexica::rebuild-frontend
@@ -162,7 +174,7 @@
             NEXT_PUBLIC_WS_URL: "{{ 'wss' if use_https == true else 'ws' }}://{{ next_public_url }}"
         source: build
         force_source: true
-      when: git_clone_perplexica.changed or ('perplexica::rebuild-frontend' in ansible_run_tags) # noqa: no-handler
+      when: git_clone_perplexica.changed or ('perplexica::rebuild-frontend' in ansible_run_tags)
 
     ### Start containers
     - name: Start perplexica-searxng container
@@ -173,6 +185,22 @@
         restart_policy: always
         networks:
           - name: perplexica-network
+      when:
+        - searxng_dockerfile.stat.exists
+
+    - name: Start perplexica-searxng container
+      tags: perplexica::rebuild-searxng
+      community.docker.docker_container:
+        name: perplexica-searxng
+        image: docker.io/searxng/searxng:latest
+        restart_policy: always
+        env:
+          SEARXNG_SECRET: "{{ query('community.general.random_string', upper=false, numbers=true, special=false, length=64)[0] }}"
+        networks:
+          - name: perplexica-network
+        volumes:
+          - "{{ git_clone_perplexica_location }}/searxng:/etc/searxng:rw"
+      when: not searxng_dockerfile.stat.exists
 
     - name: Start perplexica-backend container
       tags: perplexica::rebuild-backend, perplexica::update-config
@@ -181,14 +209,14 @@
         image: perplexica-backend:latest
         restart_policy: always
         ports:
-          - "3001:3001"
+          - "{{ backend_port }}:3001"
         networks:
           - name: perplexica-network
           # - name: nginx_proxy_manager
         # labels:
         #   traefik.enable: 'true'
         #   traefik.http.routers.perplexica.rule: 'Host(`{{ traefik_backend_url }}`)'
-        #   traefik.http.services.perplexica.loadbalancer.server.port: '3001'
+        #   traefik.http.services.perplexica.loadbalancer.server.port: '{{ backend_port }}'
 
     - name: Start perplexica-frontend container
       tags: perplexica::rebuild-frontend
@@ -197,14 +225,14 @@
         image: perplexica-frontend:latest
         restart_policy: always
         ports:
-          - "3003:3000"
+          - "{{ frontend_port }}:3000"
         networks:
           - name: perplexica-network
           # - name: nginx_proxy_manager
         # labels:
         #   traefik.enable: 'true'
         #   traefik.http.routers.perplexica.rule: 'Host(`{{ traefik_frontend_url }}`)'
-        #   traefik.http.services.perplexica.loadbalancer.server.port: '3000'
+        #   traefik.http.services.perplexica.loadbalancer.server.port: '{{ frontend_port }}'
 
     ### DEBUGGING
     # Useful for testing local/remote connections... It won't be able to test the host.{docker,lima}.internal connections
